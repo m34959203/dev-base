@@ -1,0 +1,49 @@
+name: A11y (axe-core)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  a11y:
+    name: Accessibility smoke (Playwright + axe-core)
+    runs-on: ubuntu-latest
+    env:
+      NEXTAUTH_SECRET: test-secret-for-ci-only
+      NODE_ENV: test
+      BASE_URL: http://localhost:3090
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start Next.js server
+        run: |
+          npm start -- -p 3090 > server.log 2>&1 &
+          echo $! > server.pid
+      - name: Wait for health endpoint
+        run: npx wait-on --timeout 90000 http://localhost:3090/api/health
+      - name: Run a11y project only
+        run: npx playwright test --project=a11y
+      - name: Stop Next.js server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then kill "$(cat server.pid)" || true; fi
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-report
+          path: playwright-report/
+          retention-days: 14

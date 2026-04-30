@@ -1,0 +1,43 @@
+name: DB Backup
+
+on:
+  schedule:
+    # 03:17 UTC daily (08:17 Almaty)
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    name: pg_dump • rotate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Run backup on server
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            set -euo pipefail
+            BACKUP_DIR="/home/ubuntu/backups/technokod"
+            mkdir -p "$BACKUP_DIR"
+            STAMP=$(date -u +"%Y%m%d-%H%M%S")
+            FILE="$BACKUP_DIR/technokod-$STAMP.sql.gz"
+            docker exec technokod-db pg_dump -U "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-technokod}" \
+              | gzip -9 > "$FILE"
+            echo "Wrote $FILE ($(du -h "$FILE" | cut -f1))"
+            # Rotate — keep last 14
+            ls -1t "$BACKUP_DIR"/technokod-*.sql.gz | tail -n +15 | xargs -r rm -v
+          EOF
+
+      - name: Report
+        if: failure()
+        run: echo "::error::Backup failed — inspect server logs"

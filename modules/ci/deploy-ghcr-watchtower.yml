@@ -1,0 +1,81 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # IMAGE_NAME = <github-org-or-user>/<repo>; нужно переопределить под свой проект.
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute tags
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          echo "sha_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.prod
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Deployment is handled by Watchtower on the production server,
+  # which polls ghcr.io/m34959203/technokod:latest every 5 minutes
+  # and auto-recreates the container. No SSH/secret access required.
+  smoke-test:
+    name: Smoke test (after Watchtower picks up the image)
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Watchtower + health check
+        run: |
+          # Watchtower polls every 5m; give it up to 8m to pick up the new image.
+          # HEALTH_URL переопределяется в repo Variables, fallback ниже на пример.
+          HEALTH_URL="${{ vars.HEALTH_URL || 'https://example.com/api/health' }}"
+          for i in $(seq 1 48); do
+            sleep 10
+            if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+              if [ "$i" -gt 12 ]; then
+                echo "Healthy after ${i}0s"
+                exit 0
+              fi
+            fi
+          done
+          curl -fsS "$HEALTH_URL" || { echo "Health check failed"; exit 1; }

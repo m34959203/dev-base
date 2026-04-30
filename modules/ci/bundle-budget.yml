@@ -1,0 +1,53 @@
+name: Bundle Size Budget
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+concurrency:
+  group: bundle-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle-check:
+    name: Bundle size check (<=300KB per chunk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build Next.js
+        run: npm run build
+        env:
+          # Prevent Sentry plugin from trying to upload during CI — no secret.
+          SENTRY_DSN: ""
+          NEXT_PUBLIC_SENTRY_DSN: ""
+      - name: Run bundle-size check
+        run: bash scripts/ci/check-bundle-size.sh
+        env:
+          BUNDLE_BUDGET_KB: 300
+
+      - name: Write size report for PR comment
+        if: always()
+        run: |
+          {
+            echo '## Bundle size report'
+            echo ''
+            echo 'Per-chunk sizes for `.next/static/chunks/` (budget: 300KB each).'
+            echo ''
+            echo '```'
+            bash scripts/ci/check-bundle-size.sh || true
+            echo '```'
+          } > bundle-report.md
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-size-report
+          path: bundle-report.md
+          retention-days: 14

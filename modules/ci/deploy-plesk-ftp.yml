@@ -1,0 +1,60 @@
+name: Deploy to hoster.kz
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create .env.production
+        run: |
+          cat > .env.production <<'EOF'
+          OJS_API_URL=${{ secrets.OJS_API_URL }}
+          OJS_API_TOKEN=${{ secrets.OJS_API_TOKEN }}
+          NEXT_PUBLIC_OJS_URL=${{ secrets.OJS_API_URL }}
+          HOSTNAME=0.0.0.0
+          PORT=3000
+          EOF
+
+      - name: Build (Next.js standalone)
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Deploy .next/ to hoster.kz via FTP
+        env:
+          FTP_PASS: ${{ secrets.FTP_PASS }}
+          # Hoster.kz уже имеет node_modules на webroot — standalone дублирует
+          # runtime, не нужен и провоцирует ECONNRESET на 1900+ файлах.
+          NEXT_DEPLOY_EXCLUDE_TOP: cache,dev,trace,diagnostics,standalone
+        # NOTE: --blue-green tried but Hoster.kz ProFTPD bans data-port after ~363
+        # rapid STORs to a fresh dir; reverted. Single-target upload + cache-wipe
+        # is what actually works on this hosting (deploy.yml b1ueg cd147d3).
+        run: python3 scripts/ftp_upload_next.py
+
+      - name: Smoke check
+        run: |
+          sleep 8
+          curl -sk -o /dev/null -w "vestnik.zhezu.kz HTTP %{http_code}\n" --max-time 15 https://vestnik.zhezu.kz/
+          curl -sk -o /dev/null -w "/article/14   HTTP %{http_code}\n" --max-time 15 https://vestnik.zhezu.kz/article/14
