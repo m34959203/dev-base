@@ -1,0 +1,185 @@
+# {Project Name} — Developer Guide (для Claude Code)
+
+> Этот файл автоматически читается Claude Code при работе в этом репозитории.
+> Содержит контекст о проекте, стеке, конвенциях и правилах.
+
+## Project Overview
+
+{1-2 абзаца: что это за проект, для кого, какую задачу решает.
+
+Пример: «Маркетинговый сайт и CRM-платформа AI-агентства Technokod (technokod.kz). Одно Next.js приложение, содержит публичный лендинг, блог, юр-страницы + админку с CMS, блог-редактором, лидами, аналитикой, управлением соцсетями.»}
+
+{Где развёрнуто: Cloudflare Tunnel / Plesk / Vercel / VPS docker.}
+
+## Tech Stack
+
+- {Next.js 16 App Router · React 19 · TypeScript strict · Tailwind CSS v4}
+- {PostgreSQL 16 via Prisma 5 / raw pg}
+- {Auth: jose HS256 JWT в httpOnly cookie + argon2}
+- {UI: Radix UI + Framer Motion + lucide-react + sonner}
+- {Editor: Tiptap}
+- {AI: Gemini + OpenRouter (через src/lib/ai.ts)}
+- {Soc: Telegram Bot API + Instagram Graph API (через src/lib/social/*)}
+- {Scheduler: node-cron + durable jobs в ScheduledJob}
+- {Deploy: Docker + Cloudflare Tunnel}
+
+## Running Locally
+
+```bash
+# Первый запуск
+cp .env.example .env    # отредактировать
+npm ci
+npx prisma migrate dev          # или: psql $DATABASE_URL -f sql/001_init.sql
+npm run seed                    # создаёт admin@... (пароль в .adminpass)
+
+# Dev-сервер
+npm run dev              # http://localhost:3000
+```
+
+## Architecture conventions
+
+### Routing
+- `src/app/(site)/...` — публичные страницы, полный layout сайта
+- `src/app/(admin)/admin/...` — админка за JWT-guard (middleware)
+- `src/app/(auth)/login/...` — формы входа ВНЕ admin-layout
+- `src/app/api/...` — REST. Приватные под `/api/admin/*` или с `requireRole()` в handler
+
+### Auth & RBAC
+- Cookie: `<app>_session` (httpOnly, secure, sameSite=lax, 7 days)
+- `requireUser()` → любой залогиненный
+- `requireRole(["admin"])` / `requireRole(["admin", "editor"])` → защита role
+- В handler типизируется как `UserPayload = { userId, role, email }`
+- **Важно:** `user.userId`, НЕ `user.id` (это payload JWT, не модель)
+- **Правило:** в админ-роутах ВСЕГДА `["admin", "editor"]` + try/catch AuthError, иначе 500
+
+### Database
+- snake_case колонки (через `@map` / `@@map` в Prisma)
+- UUID PK (`@default(uuid())` или `DEFAULT uuid_generate_v4()`)
+- Двуязычные поля: суффикс `_kk` / `_ru` (пример: `title_kk`, `title_ru`)
+- TIMESTAMP **WITH TIME ZONE** всегда
+
+### Locales
+- `kk` (казахский) и `ru` (русский) — ISO-правильно; **НЕ `kz`**
+- По-умолчанию: `ru` (бизнес в Казахстане)
+- Helper: `getLocalizedField(row, "title", locale)` в `src/lib/i18n.ts`
+- URL: `/ru` (по умолчанию) и `/kk` prefix для казахского варианта
+
+### API conventions
+- REST в `src/app/api/<resource>/route.ts`
+- Ответ: `{ data: ... }` при успехе / `{ error: "msg" }` при ошибке
+- Все входы — Zod-схема в `src/lib/validators.ts` или inline
+- Rate-limit на публичных формах через `src/lib/rate-limit.ts`
+- В Next 16 `params` — это `Promise`: `{ params }: { params: Promise<{ id: string }> }`
+
+### Code style
+- TypeScript strict, **никаких `any`**
+- Server components по умолчанию, `"use client"` только когда нужно
+- camelCase для функций и переменных, PascalCase для компонентов
+- Комментарии только там, где важно объяснить *почему*
+- Никаких мёртвых TODO
+
+## Security
+
+- SQL — только через ORM или параметризованные запросы (никаких string-concat)
+- JWT в httpOnly + secure + sameSite
+- File upload — проверка типа и размера
+- Rate-limit на login, leads, AI, analytics/track
+- XSS: React auto-escape + CSP headers в `next.config.ts`
+- RBAC на **каждом** admin-эндпоинте
+- Секреты соцсетей — AES-256-GCM в БД через `SOCIAL_ENCRYPTION_KEY`
+- CSRF защита — через sameSite=lax cookie
+
+## AI
+
+- Primary: Gemini (`@google/genai`, модель `gemini-2.5-flash` по умолчанию)
+- Fallback: OpenRouter
+- **Pre-flight guard** `await assertQuota(model)` перед каждым Gemini-вызовом — блокирует на 90% любого лимита
+- Каждый вызов логируется в `AIGeneration` (tokens, cost, duration)
+- Graceful fallback: если нет ключа — возвращаем null или demo-stub, не падаем
+- Интерфейс: `aiComplete({prompt, system, purpose, userId})`
+
+## Testing
+
+- {Если ещё нет — пока нет тестов. Перед мерджем PR:
+  - `npm run lint` — проходит
+  - `npx tsc --noEmit` — типы ок
+  - `npm run build` — билд успешен
+  - Smoke: `curl /api/health` → `200 {status: "ok"}`}
+
+## Git
+
+- Conventional Commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`
+- Описание коммита — на русском, инфинитив, ≤72 символа, без точки
+- Branch naming: `feat/xxx`, `fix/xxx`
+- PR обязательно в `main` (или `master`)
+- **Не** коммитить: `.env`, `.adminpass`, `.dbpass`, `node_modules`, `.next`
+
+## Deploy
+
+{Описать как у вас:
+
+GHCR + Watchtower:
+- Push в `main` → GitHub Actions CI → деплой в GHCR
+- Watchtower на сервере опрашивает каждые 5 мин и пересоздаёт контейнер
+
+Plesk FTP:
+- Push в `main` → GitHub Actions → ftp_upload_next.py → Plesk
+- Touch /tmp/restart.txt → Plesk перезапускает Node-app
+
+См. также `playbooks/deploy-*.md` в dev-base.}
+
+## Важные файлы
+
+| Файл | Назначение |
+|------|-----------|
+| `src/middleware.ts` | JWT-guard `/admin/*` + структурный лог + security headers |
+| `src/instrumentation.ts` | Старт scheduler в Node-процессе |
+| `prisma/schema.prisma` | Единая схема |
+| `prisma/seed.ts` | Создаёт admin-пользователя при первом запуске |
+| `next.config.ts` | Standalone, CSP, HSTS, images.remotePatterns |
+| `Dockerfile.prod` | Multi-stage, non-root, standalone |
+| `.adminpass` | **Не коммитить.** Пароль первого админа |
+| `.env` | **Не коммитить.** Все credentials |
+
+## Частые задачи
+
+**Добавить новую страницу сайта:**
+1. Создать `src/app/(site)/NEW_PAGE/page.tsx`
+2. Использовать `buildMetadata({...})` из `src/lib/seo.ts`
+3. Опционально добавить в `sitemap.ts`
+
+**Добавить новый API-эндпоинт:**
+1. `src/app/api/RESOURCE/route.ts` с `GET/POST/PATCH/DELETE` handlers
+2. Zod-схема входа в `src/lib/validators.ts`
+3. Приватный — добавить `await requireRole([...])` в начале
+4. Rate-limit если публичный
+
+**Добавить поле в модель:**
+1. Изменить `prisma/schema.prisma` (или добавить `sql/NNN_name.sql`)
+2. `npx prisma migrate dev --name add_field_X`
+3. Если меняется seed — обновить `prisma/seed.ts`
+4. Проверить что admin-UI читает/пишет корректно
+
+## Когда что-то ломается
+
+| Симптом | Первое действие |
+|---------|----------------|
+| 502 от Cloudflare | `docker ps` → проверить статус контейнера |
+| DB-ошибка в `/api/health` | проверить `DATABASE_URL` и сеть до DB |
+| Auth не работает | проверить `AUTH_SECRET` и что cookie ставится (HTTPS!) |
+| TG не постит | `/admin/social` → Test button, проверить токен (может истёк) |
+| IG не постит | accessToken на 60 дней, нужен auto-refresh |
+| Build падает | `NODE_OPTIONS=--max-old-space-size=4096 npm run build` |
+
+## Связанные plays из dev-base
+
+(Указать какие реально применимы к проекту)
+
+- `playbooks/deploy-{ghcr-watchtower,nextjs-plesk-ftp,nextjs-standalone-deploy-local}.md`
+- `playbooks/auth-jwt-refresh.md`
+- `playbooks/ai-quota-guard.md`
+- `playbooks/social-autopost.md`
+- `playbooks/scheduler-cron.md`
+- `playbooks/seo-checklist.md`
+- `playbooks/sql-migrations-style.md`
+- `playbooks/nextjs16-csp-hardening.md`
