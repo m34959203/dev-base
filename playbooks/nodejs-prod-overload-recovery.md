@@ -278,12 +278,37 @@ export default function ErrorBoundary({ error, reset }) {
 }
 ```
 
-После добавления требует `pnpm --filter web build`. На 2GB VPS перед билдом:
+После добавления требует `pnpm --filter web build`.
+
+⚠️ **Web build стратегия — выбирай между скоростью и downtime:**
+
+**Вариант A. С downtime (~2 мин)** — простой, но прод-сайт вернёт 502:
 ```bash
-pm2 stop <web>                                    # освободит ~400 MB
+pm2 stop <web>                                    # освободит ~400 MB → больше RAM на билд
 NODE_OPTIONS="--max-old-space-size=900" pnpm --filter web build
 pm2 start <web>
 ```
+Используй на dev-only / staging / в окне обслуживания. На проде в дневное время **не делай так** — пользователи увидят CF 502.
+
+**Вариант B. Без downtime (предпочтительный для prod)** — старый `pnpm start` продолжает работать на старом `.next/`, билд идёт во временную папку, atomic swap:
+```bash
+# 1. Билд в side-папку, не трогая текущий .next
+cd apps/web
+NODE_OPTIONS="--max-old-space-size=900" pnpm build              # пишет в .next
+# Если RAM не хватает (~1.4 GB должно быть available), сначала pm2 stop, потом скрипт ниже.
+# На AIMAK 2GB-VPS с available 1.4 GB build идёт без stop за ~3 минуты.
+
+# 2. После успешного билда — pm2 reload (graceful, без обрыва inflight-запросов)
+pm2 reload <web>
+
+# Для standalone-выходов (next.config.js: output: 'standalone'):
+# можно swap'ать каталог через ln -s /symlink, переключая на новую сборку atomically
+# (см. отдельный playbook nextjs-standalone-deploy-local.md).
+```
+
+**Вариант C. Через CI с blue/green** — кошерно, но требует второго порта/процесса. См. `playbooks/deploy-ghcr-watchtower.md`.
+
+**Не забывай очистить `.turbo/` cache, если build начинает падать с непонятными webpack-ошибками после major-bump зависимостей.**
 
 ## Шаг финальный. Верификация
 
