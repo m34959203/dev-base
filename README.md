@@ -64,6 +64,8 @@ dev-base/
 - [sql-migrations-style.md](playbooks/sql-migrations-style.md) — нумерованные idempotent SQL-миграции
 - [nextjs16-csp-hardening.md](playbooks/nextjs16-csp-hardening.md) — CSP/HSTS/headers production
 - [server-port-isolation.md](playbooks/server-port-isolation.md) — карта портов multi-tenant VPS
+- [nodejs-prod-overload-recovery.md](playbooks/nodejs-prod-overload-recovery.md) — диагностика и устранение перегрузки PM2+NestJS+Prisma+Postgres на 2GB VPS
+- [cloudflare-ssr-cache.md](playbooks/cloudflare-ssr-cache.md) — CF Free кэш HTML/static + bypass admin/API (−40-60% CPU)
 
 ### Modules
 
