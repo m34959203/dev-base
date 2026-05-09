@@ -169,11 +169,50 @@ return this.prisma.<entity>.findMany({
 });
 ```
 
-**Фикс (frontend defense-in-depth):** в helper'е web/lib/api.ts передавать дефолтный limit всегда:
+**Фикс (frontend defense-in-depth) — ВНИМАНИЕ, тут ловушка:**
+
+Соблазнительно сделать в helper'е web/lib/api.ts «всегда передаём limit, даже если не просили»:
 ```ts
+// ❌ ОПАСНО — ломает консьюмеров, если backend меняет контракт при наличии limit
 getAll: (published?: boolean, limit: number = 100) =>
   api.get('/api/<entity>', { params: { ...(published !== undefined && { published }), limit } }),
 ```
+
+**Почему не работает:** типичная findAll() имеет ветку
+```ts
+if (filters?.page !== undefined || filters?.limit !== undefined) {
+  return { data: [...], meta: { total, page, limit, totalPages } };  // paginated
+}
+return [...];                                                         // плоский Array
+```
+
+Передал `limit=100` без `page` → backend ушёл в paginated формат → клиенты, которые делали `articles.map(...)` или `[...articles]` через React Query, ловят **`TypeError: E is not iterable`** в minified page-chunk. Боевой случай AIMAK 2026-05-09.
+
+**Правильно:**
+- Защиту от full-table держать **в backend** (`take: 100` в backward-compat ветке + clamp limit max=200). Backend — единственный источник истины контракта.
+- В web helper'е НЕ передавать дефолтный limit. Хочешь paginated — заведи отдельный метод:
+  ```ts
+  getAll: (published?: boolean) =>
+    api.get<Article[]>('/api/<entity>', {
+      params: published !== undefined ? { published } : {},
+    }),
+  // отдельный helper для пагинации — явный другой return type
+  getPaginated: (params: { published?: boolean; page?: number; limit?: number }) =>
+    api.get<{ data: Article[]; meta: { total: number; page: number; limit: number; totalPages: number } }>(
+      '/api/<entity>',
+      { params },
+    ),
+  ```
+
+**Альтернативный подход** — починить условие в backend на «paginated только при `?page`»:
+```ts
+if (filters?.page !== undefined) {            // только page, не limit
+  return { data, meta };
+}
+// Иначе — плоский массив с применённым limit
+return this.prisma.<entity>.findMany({ ..., take: limit ?? 100 });
+```
+Это менее invasive: каллеры могут передавать только `?limit` без сюрпризов.
 
 ## Причина 5: Тяжёлые запросы без подходящего индекса
 
