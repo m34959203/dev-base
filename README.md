@@ -66,6 +66,7 @@ dev-base/
 - [server-port-isolation.md](playbooks/server-port-isolation.md) — карта портов multi-tenant VPS
 - [nodejs-prod-overload-recovery.md](playbooks/nodejs-prod-overload-recovery.md) — диагностика и устранение перегрузки PM2+NestJS+Prisma+Postgres на 2GB VPS
 - [ai-usage-logging.md](playbooks/ai-usage-logging.md) — статистика AI-вызовов в БД через bridge от static utility к Injectable service
+- [cf-free-100s-batch-pattern.md](playbooks/cf-free-100s-batch-pattern.md) — обход CF Free 100s timeout через батчинг с idempotency-меткой
 
 ### Modules
 
