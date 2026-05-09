@@ -244,6 +244,88 @@ React Query с `refetchInterval: 60_000` для авто-апдейта.
    ```
 5. Открыть `/admin/statistics/ai` — данные должны появиться
 
+## AI Output Validation — НЕ использовать substring для коротких slug'ов
+
+Боевой кейс AIMAK 2026-05-09 (commit `3ab01e8`): в категорию с slug=`r` (Референдум) попали 6 случайных статей про День Победы, благоустройство, субботник.
+
+**Корни:**
+1. Slug `r` — **одна буква**. Проверка `cleaned.includes(slug)` ловит её в любом ответе AI: `general`, `regional`, `current`, `referendum`...
+2. Prompt RULES перечислял **выдуманные slug'и** (`zhanalyqtar`, `sayasat`, `qogam` — таких в БД нет). AI генерил → нет match → fallback в substring → letter `r`.
+
+**Правила:**
+
+```ts
+// ❌ ОПАСНО — substring match для коротких slug'ов
+for (const slug of validSlugs) {
+  if (cleaned.includes(slug)) return slug;  // 'r' попадает в 'general'
+}
+
+// ✅ Word-boundary regex + сортировка по длине ↓
+const sortedSlugs = [...validSlugs].sort((a, b) => b.length - a.length);
+for (const slug of sortedSlugs) {
+  const escaped = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i');
+  if (re.test(cleaned)) return slug;
+}
+```
+
+**Также — Prompt должен содержать РЕАЛЬНЫЕ slug'и из БД, не выдуманные:**
+
+```ts
+// ❌ ОПАСНО — выдуманный список
+RULES:
+- sayasat: Politics
+- madeniyet: Culture
+- qogam: Society
+
+// ✅ Динамический список из БД
+const slugList = validSlugs.map(s => `"${s}"`).join(', ');
+return `ALLOWED CATEGORY SLUGS: ${slugList}
+ОТВЕЧАЙ ТОЛЬКО ОДНИМ словом из списка выше.
+Любой другой ответ будет отклонён.`;
+```
+
+**Дополнительные защиты:**
+- Минимальная длина slug в БД ≥ 3 chars (через CHECK constraint или validation в seed-скрипте). Однобуквенные slug'и опасны.
+- Логировать invalid response с уровнем `warn`, не `error` — это нормальный fallback, не катастрофа.
+- При rename slug-а — обязательно nginx 301 redirect для SEO:
+  ```nginx
+  location ~ ^/(kz|ru)/r/(.*)$ {
+      return 301 /$1/referendum/$2;
+  }
+  ```
+
+## Бэкфилл без AI-токенов (когда AI ошибся в продакшене)
+
+Если категории уже зашумлены ошибочными AI-перемещениями, можно **провести conservative reclassification без новых AI-вызовов** — Python-скрипт с keyword-эвристикой:
+
+```python
+KW_REFERENDUM_STRICT = ['референдум', 'жаңа конституция', 'ата заң', ...]
+KW_KAZAKHMYS = ['казахмыс', 'қазақмыс', 'kazakhmys']
+
+def classify_conservative(text: str, current: str) -> str | None:
+    # Move FROM r → news если нет ни одного strict-keyword
+    if current == 'r' and not has_any(text, KW_REFERENDUM_STRICT):
+        return 'news'
+    # Move TO kazakhmys только если явное упоминание
+    if current == 'news' and has_any(text, KW_KAZAKHMYS):
+        return 'kazakhmys'
+    # Move TO r только при 2+ strict keywords (защита от 1 случайного совпадения)
+    if current != 'r':
+        score = sum(1 for kw in KW_REFERENDUM_STRICT if kw in text.lower())
+        if score >= 2:
+            return 'r'
+    return None  # не уверены → не трогаем
+```
+
+Принципы:
+- **Conservative**: только sure-thing transitions. Если score==1 для одной категории — не двигаем.
+- **Negative keywords** для категории `r`: если текст содержит «жеңіс»/«ветеран»/«благоустройство» — обнулить score `r`.
+- Помечать `aiCategorizedAt=NOW()` после backfill — чтобы AI batch-категоризация потом не перетопталось.
+- Output как SQL `UPDATE articles SET category_id=... WHERE id IN (...)` — review перед apply, можно увидеть `from→to` summary.
+
+В AIMAK: 1163 transitions при naive keyword-эвристике (64% всех статей — слишком агрессивно), **162 transitions** при conservative (лучше точность). См. `dev-base/templates/scripts/classify_conservative.py` (TBD).
+
 ## Подводные камни
 
 - **Не делать `await` на log()** — добавит +5-20ms latency к каждому AI-вызову. Fire-and-forget через `.catch(() => {})` достаточно. Если БД упадёт — записи потеряются, но AI-вызов пройдёт.
