@@ -50,7 +50,7 @@ dev-base/
 - [ai-content-analysis.md](prompts/ai-content-analysis.md) — анализ редакторского контента (score+improved_*)
 - [logo-til-kural.md](prompts/logo-til-kural.md) — пример промпта на разработку логотипа
 
-### Playbooks (12 шт)
+### Playbooks (20+ шт)
 - [deploy-nextjs-plesk-ftp.md](playbooks/deploy-nextjs-plesk-ftp.md) — Plesk FTP для Next.js (Hoster.kz)
 - [deploy-ghcr-watchtower.md](playbooks/deploy-ghcr-watchtower.md) — GHCR + Watchtower auto-deploy без SSH
 - [nextjs-standalone-deploy-local.md](playbooks/nextjs-standalone-deploy-local.md) — локальный standalone-deploy на VPS
@@ -68,6 +68,9 @@ dev-base/
 - [ai-usage-logging.md](playbooks/ai-usage-logging.md) — статистика AI-вызовов в БД через bridge от static utility к Injectable service
 - [cf-free-100s-batch-pattern.md](playbooks/cf-free-100s-batch-pattern.md) — обход CF Free 100s timeout через батчинг с idempotency-меткой
 - [nestjs-security-hardening.md](playbooks/nestjs-security-hardening.md) — production hardening NestJS API: helmet, throttler, setup-auth, MIME, DOMPurify, CORS
+- [vertex-ai-live-ws-proxy.md](playbooks/vertex-ai-live-ws-proxy.md) — Vertex AI Live API через WebSocket-прокси на бэке (SA JSON не уходит на фронт, безопасно)
+- [gcp-billing-aup-survival.md](playbooks/gcp-billing-aup-survival.md) — как не получить suspended project и не списать $200 за ночь (anti-patterns, ротация ключей, чек-лист)
+- [esm-cjs-dynamic-import.md](playbooks/esm-cjs-dynamic-import.md) — ESM-only SDK (`@google/genai` v1+, `node-fetch` v3+) в CommonJS-приложениях через `await import()`
 
 ### Modules
 
